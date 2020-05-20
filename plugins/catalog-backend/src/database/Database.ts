@@ -14,25 +14,162 @@
  * limitations under the License.
  */
 
+import { ConflictError, NotFoundError } from '@backstage/backend-common';
 import Knex from 'knex';
 import { v4 as uuidv4 } from 'uuid';
-import { NotFoundError } from '@backstage/backend-common';
+import { DescriptorEnvelope } from '../ingestion/descriptors/types';
 import {
-  AddDatabaseComponent,
   AddDatabaseLocation,
-  DatabaseComponent,
   DatabaseLocation,
   DatabaseLocationUpdateLogEvent,
   DatabaseLocationUpdateLogStatus,
 } from './types';
 
+type DbLocationsRow = {
+  id: string;
+  type: string;
+  target: string;
+};
+
+export type DbEntityRequest = {
+  locationId?: string;
+  entity: DescriptorEnvelope;
+};
+
+export type DbEntityResponse = {
+  locationId?: string;
+  entity: DescriptorEnvelope;
+};
+
+type DbEntitiesRow = {
+  id: string;
+  generation: number;
+  locationId: string | null;
+  apiVersion: string;
+  kind: string;
+  name: string | null;
+  namespace: string | null;
+  metadata: string | null;
+  spec: string | null;
+};
+
+type DbEntitiesSearchRow = {
+  entityId: string;
+  key: string;
+  value: string | null;
+};
+
+function entityDbToResponse(row: DbEntitiesRow): DbEntityResponse {
+  const entity: DescriptorEnvelope = {
+    apiVersion: row.apiVersion,
+    kind: row.kind,
+    metadata: {
+      uid: row.id,
+      generation: row.generation,
+    },
+  };
+
+  if (row.metadata) {
+    const metadata = JSON.parse(row.metadata) as DescriptorEnvelope['metadata'];
+    entity.metadata = { ...entity.metadata, ...metadata };
+  }
+
+  if (row.spec) {
+    const spec = JSON.parse(row.spec);
+    entity.spec = spec;
+  }
+
+  return {
+    locationId: row.locationId || undefined,
+    entity,
+  };
+}
+
+function serializeMetadata(
+  metadata: DescriptorEnvelope['metadata'],
+): DbEntitiesRow['metadata'] {
+  if (!metadata) {
+    return null;
+  }
+
+  const output = { ...metadata };
+  delete output.uid;
+  delete output.generation;
+
+  return JSON.stringify(output);
+}
+
+function serializeSpec(
+  spec: DescriptorEnvelope['spec'],
+): DbEntitiesRow['spec'] {
+  if (!spec) {
+    return null;
+  }
+
+  return JSON.stringify(spec);
+}
+
+function entityRequestToDb(request: DbEntityRequest): DbEntitiesRow {
+  return {
+    id: request.entity.metadata?.uid || uuidv4(),
+    generation: request.entity.metadata?.generation || 1,
+    locationId: request.locationId || null,
+    apiVersion: request.entity.apiVersion,
+    kind: request.entity.kind,
+    name: request.entity.metadata?.name || null,
+    namespace: request.entity.metadata?.namespace || null,
+    metadata: serializeMetadata(request.entity.metadata),
+    spec: serializeSpec(request.entity.spec),
+  };
+}
+
 export class Database {
   constructor(private readonly database: Knex) {}
 
-  async addOrUpdateComponent(component: AddDatabaseComponent): Promise<void> {
+  async addOrUpdateEntity(request: DbEntityRequest): Promise<DbEntityResponse> {
+    const newRow = entityRequestToDb(request);
+
+    return await this.database.transaction<DbEntityResponse>(async tx => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { uid, name, namespace } = request.entity.metadata ?? {};
+
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      let oldRow: DbEntitiesRow | undefined;
+      if (uid) {
+        const rows = await tx<DbEntitiesRow>('entities')
+          .where({ id: uid })
+          .select();
+        if (rows.length) {
+          oldRow = rows[0];
+        } else {
+          throw new ConflictError('Unexpected uid for new entity');
+        }
+      }
+
+      if (oldRow) {
+        const { name: oldName, namespace: oldNamespace } =
+          request.entity.metadata ?? {};
+        if (oldName !== request.entity.metadata?.name) {
+        }
+      }
+
+      await tx<DbEntitiesRow>('entities').insert(newRow);
+      const generatedRows = await tx<DbEntitiesRow>('entities')
+        .where({ id: newRow.id })
+        .select();
+      return entityDbToResponse(generatedRows![0]);
+    });
+
+    /*
+    let oldRow: DbEntitiesRow;
+    if (request.entity.metadata?.uid) {
+    }
+    if (request.entity.metadata?.name) {
+    }
+    if (request.entity.metadata?.namespace) {
+    }
+
     await this.database.transaction(async tx => {
-      // TODO(freben): Currently, several locations can compete for the same component
-      // TODO(freben): If locationId is unset in the input, it won't be overwritten - should we instead replace with null?
       const count = await tx<DatabaseComponent>('components')
         .where({ name: component.name })
         .update({ ...component });
@@ -43,22 +180,31 @@ export class Database {
         });
       }
     });
+    */
   }
 
-  async components(): Promise<DatabaseComponent[]> {
-    return await this.database<DatabaseComponent>('components')
-      .orderBy('name')
+  async entities(): Promise<DbEntityResponse[]> {
+    const rows = await this.database<DbEntitiesRow>('entities')
+      .orderBy('namespace', 'name')
       .select();
+
+    return rows.map(row => entityDbToResponse(row));
   }
 
-  async component(name: string): Promise<DatabaseComponent> {
-    const items = await this.database<DatabaseComponent>('components')
-      .where({ name })
+  async entity(name: string, namespace?: string): Promise<DbEntityResponse> {
+    const items = await this.database<DbEntitiesRow>('entities')
+      .where({ name, namespace: namespace || null })
       .select();
-    if (!items.length) {
-      throw new NotFoundError(`Found no component with name ${name}`);
+
+    if (items.length !== 1) {
+      throw new NotFoundError(
+        `Found no component with name ${name}, namespace ${
+          namespace || '<null>'
+        }`,
+      );
     }
-    return items[0];
+
+    return entityDbToResponse(items[0]);
   }
 
   async addLocation(location: AddDatabaseLocation): Promise<DatabaseLocation> {

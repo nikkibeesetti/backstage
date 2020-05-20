@@ -86,8 +86,8 @@ describe('DatabaseManager', () => {
       ).resolves.toBeUndefined();
       expect(reader.read).toHaveBeenCalledTimes(1);
       expect(reader.read).toHaveBeenNthCalledWith(1, 'some', 'thing');
-      expect(db.addOrUpdateComponent).toHaveBeenCalledTimes(1);
-      expect(db.addOrUpdateComponent).toHaveBeenNthCalledWith(
+      expect(db.addOrUpdateEntity).toHaveBeenCalledTimes(1);
+      expect(db.addOrUpdateEntity).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({ locationId: '123', name: 'c1' }),
       );

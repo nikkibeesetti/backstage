@@ -14,26 +14,60 @@
  * limitations under the License.
  */
 
-import knex from 'knex';
+import Knex from 'knex';
 import path from 'path';
-import { Database } from './Database';
+import { Database, DbEntityRequest, DbEntityResponse } from './Database';
 import { AddDatabaseLocation, DatabaseLocation } from './types';
+import { ConflictError } from '@backstage/backend-common';
 
 describe('Database', () => {
-  const database = knex({
-    client: 'sqlite3',
-    connection: ':memory:',
-    useNullAsDefault: true,
-  });
-  database.client.pool.on('createSuccess', (_eventId: any, resource: any) => {
-    resource.run('PRAGMA foreign_keys = ON', () => {});
-  });
+  let database: Knex;
+  let entityRequest: DbEntityRequest;
+  let entityResponse: DbEntityResponse;
 
   beforeEach(async () => {
+    database = Knex({
+      client: 'sqlite3',
+      connection: ':memory:',
+      useNullAsDefault: true,
+    });
+
+    await database.raw('PRAGMA foreign_keys = ON');
     await database.migrate.latest({
       directory: path.resolve(__dirname, 'migrations'),
       loadExtensions: ['.ts'],
     });
+
+    entityRequest = {
+      entity: {
+        apiVersion: 'a',
+        kind: 'b',
+        metadata: {
+          name: 'c',
+          namespace: 'd',
+          labels: { e: 'f' },
+          annotations: { g: 'h' },
+        },
+        spec: { i: 'j' },
+      },
+    };
+
+    entityResponse = {
+      locationId: undefined,
+      entity: {
+        apiVersion: 'a',
+        kind: 'b',
+        metadata: {
+          uid: expect.anything(),
+          generation: expect.anything(),
+          name: 'c',
+          namespace: 'd',
+          labels: { e: 'f' },
+          annotations: { g: 'h' },
+        },
+        spec: { i: 'j' },
+      },
+    };
   });
 
   it('manages locations', async () => {
@@ -74,5 +108,25 @@ describe('Database', () => {
     expect(output2).toEqual(output1);
     // Locations contain only one record
     expect(locations).toEqual([output1]);
+  });
+
+  describe('addOrUpdateEntity', () => {
+    it('happy path: adds entity to empty database', async () => {
+      const catalog = new Database(database);
+      await expect(
+        catalog.addOrUpdateEntity(entityRequest),
+      ).resolves.toStrictEqual(entityResponse);
+    });
+
+    it('rejects new entity with user-chosen uid', async () => {
+      const catalog = new Database(database);
+
+      const input = entityRequest;
+      input.entity.metadata!.uid = 'hello';
+
+      await expect(catalog.addOrUpdateEntity(input)).rejects.toThrow(
+        ConflictError,
+      );
+    });
   });
 });
