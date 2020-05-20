@@ -16,21 +16,7 @@
 
 import * as yup from 'yup';
 import { Validators } from '../../validation';
-
-/**
- * The format envelope that's common to all versions/kinds
- */
-export type DescriptorEnvelope = {
-  apiVersion: string;
-  kind: string;
-  metadata?: {
-    name?: string;
-    namespace?: string;
-    labels?: object;
-    annotations?: object;
-  };
-  spec?: object;
-};
+import { DescriptorEnvelope } from './types';
 
 /**
  * Parses some raw structured data as a descriptor envelope
@@ -55,6 +41,24 @@ export class DescriptorEnvelopeParser {
         'kind',
         'The kind is not formatted according to schema',
         validators.isValidKind,
+      );
+
+    const uidSchema = yup
+      .string()
+      .notRequired()
+      .test(
+        'metadata.uid',
+        'The uid is not formatted according to schema',
+        value => value === undefined || value.length > 0,
+      );
+
+    const generationSchema = yup
+      .number()
+      .notRequired()
+      .test(
+        'metadata.generation',
+        'The generation value is not according to schema',
+        value => value === undefined || value > 0,
       );
 
     const nameSchema = yup
@@ -125,6 +129,8 @@ export class DescriptorEnvelopeParser {
 
     const metadataSchema = yup
       .object({
+        uid: uidSchema,
+        generation: generationSchema,
         name: nameSchema,
         namespace: namespaceSchema,
         labels: labelsSchema,
@@ -158,6 +164,8 @@ export class DescriptorEnvelopeParser {
     const reservedKeys = [
       'apiVersion',
       'kind',
+      'uid',
+      'generation',
       'name',
       'namespace',
       'labels',

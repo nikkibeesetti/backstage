@@ -16,8 +16,7 @@
 
 import * as yup from 'yup';
 import { ParserOutput } from '../types';
-import { DescriptorEnvelope } from './DescriptorEnvelopeParser';
-import { KindParser } from './types';
+import { DescriptorEnvelope, KindParser } from './types';
 
 export interface ComponentDescriptorV1beta1 extends DescriptorEnvelope {
   metadata: {
