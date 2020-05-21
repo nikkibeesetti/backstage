@@ -37,6 +37,9 @@ export class GoogleAuthProvider
     next: express.NextFunction,
   ) {
     const scopes = req.query.scopes?.toString().split(',');
+    if (!scopes) {
+      throw Error('Scopes should be specified for Google auth request');
+    }
     return passport.authenticate('google', {
       scope: scopes,
       accessType: 'offline',
@@ -58,7 +61,7 @@ export class GoogleAuthProvider
   }
 
   logout(_req: express.Request, res: express.Response) {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       res.send('logout!');
       resolve();
     });
